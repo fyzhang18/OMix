@@ -1,0 +1,703 @@
+---
+title: "O Mixed Analysis"
+author: "Felicia Zhang"
+date: 'July 29 2017'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+library(RColorBrewer)
+library(lmerTest)
+
+#1. load data (master)
+#orig <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/All/preprocessed/OMixed_preprocessed_final.csv")   
+#orig$X <- NULL
+#saveRDS(orig, "OMix.rds")
+
+orig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/OMix.rds")
+
+#pupil corrected = baseline is each image
+#pupil corrected 2 = baseline first image of triplet
+#block = 1 = triplet, 2 = random
+#imageseq = first, second or third image in triplet
+#timesseen = times seen the triplet (range 1- 20)
+#TRIP_TRIAL_INDEX = correct triplet trial number
+#TIMECODE2 = correct 0 - 3754ms
+
+#colors
+color.t <- c("#FFCC00", "#ff9900","#FF6600") #triplet position
+color.r <- c("#0099ff", "#0066ff","#0033ff") #triplet position
+a = c(500,1750,3000)
+aa = c(1250,2500)
+b = c("#ff9900","#0066ff") #condition
+
+```
+
+Summary graphs
+```{r}
+#Preprocessing: removed trials with more than 50% missing, removed subjects with more than 25% missing now we have 40/53 subs
+
+#number of trials in each block
+foo <- ddply(orig,.(subID,block),summarise,numoftrials=length(unique(TRIAL_INDEX))) 
+
+ggplot(foo,aes(x=factor(subID),y=numoftrials,color=factor(block),fill=factor(block)))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_bar(stat="identity")+ggtitle("Number of trials completed per subject")+
+  labs(x = "Subject ID", y = "Number of trials")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  geom_hline(yintercept = 480, size =1)+geom_hline(yintercept = 240, size =1)
+
+#X and Y coordinate
+#block 1
+
+#calculation avg gaze x and gaze y position during that period
+doo <- ddply(block1,.(subID,TRIAL_INDEX),summarise,meanY=mean(RIGHT_GAZE_Y,na.rm = TRUE),meanX=mean(RIGHT_GAZE_X,na.rm = TRUE)) 
+
+ggplot(doo,aes(x=meanX,y=meanY,color=factor(subID),fill=factor(subID)))+
+  geom_point()+ggtitle("Gaze position during block 1")+
+  labs(x = "X coordinate", y = "Y coordinate")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,300),position="top")+
+  scale_y_reverse(limits = c(1024, 0))
+
+doo <- ddply(block2,.(subID,TRIAL_INDEX),summarise,meanY=mean(RIGHT_GAZE_Y,na.rm = TRUE),meanX=mean(RIGHT_GAZE_X,na.rm = TRUE)) 
+
+ggplot(doo,aes(x=meanX,y=meanY,color=factor(subID),fill=factor(subID)))+
+  geom_point()+ggtitle("Gaze position during block 2")+
+  labs(x = "X coordinate", y = "Y coordinate")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,300),position="top")+
+  scale_y_reverse(limits = c(1024, 0))
+
+#not everyone is looking at the center of the screen...
+```
+
+Only keep looks to center
+~ 400 x 400 box
+``` {r}
+#screen dimensions of screen are 1280 x 1024 and image itself is 250 x 250 pixels 
+orig2 <- orig
+a <- which(orig2$RIGHT_GAZE_X < 440)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_Y < 312)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_X > 840)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_Y > 712)
+orig2 <- orig2[-c(a), ]
+
+block1 <- subset(orig2, TRIAL_INDEX < 241)
+block2 <- subset(orig2, TRIAL_INDEX > 240)
+
+#calculation avg gaze x and gaze y position during that period
+doo <- ddply(block1,.(subID,TRIAL_INDEX),summarise,meanY=mean(RIGHT_GAZE_Y,na.rm = TRUE),meanX=mean(RIGHT_GAZE_X,na.rm = TRUE)) 
+
+ggplot(doo,aes(x=meanX,y=meanY,color=factor(subID),fill=factor(subID)))+
+  geom_point()+ggtitle("Gaze position during block 1")+
+  labs(x = "X coordinate", y = "Y coordinate")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,300),position="top")+
+  scale_y_reverse(limits = c(1024, 0))
+
+doo <- ddply(block2,.(subID,TRIAL_INDEX),summarise,meanY=mean(RIGHT_GAZE_Y,na.rm = TRUE),meanX=mean(RIGHT_GAZE_X,na.rm = TRUE)) 
+
+ggplot(doo,aes(x=meanX,y=meanY,color=factor(subID),fill=factor(subID)))+
+  geom_point()+ggtitle("Gaze position during block 2")+
+  labs(x = "X coordinate", y = "Y coordinate")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,300),position="top")+
+  scale_y_reverse(limits = c(1024, 0))
+
+#number of trials in each block
+foo <- ddply(orig2,.(subID,block),summarise,numoftrials=length(unique(TRIAL_INDEX))) 
+
+ggplot(foo,aes(x=factor(subID),y=numoftrials,color=factor(block),fill=factor(block)))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_bar(stat="identity")+ggtitle("Number of trials completed per subject (after removing looks not to center)")+
+  labs(x = "Subject ID", y = "Number of trials")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  geom_hline(yintercept = 480, size =1)+geom_hline(yintercept = 240, size =1)
+```
+
+3 z-score versions: each subject, for each block, or for each triplet trial
+
+Z-score pupil size for each subject
+```{r}
+poo <- orig2
+subs <- unique(poo$subID)
+poo$zscore <- 1
+
+for (j in 1:length(subs)) {
+  #for each subject
+  v1 <- subset(poo, subID==subs[j])  
+  sub_sd <- sd(v1$RIGHT_PUPIL_SIZE)*sqrt((length(v1$RIGHT_PUPIL_SIZE)-1)/(length(v1$RIGHT_PUPIL_SIZE)))
+  sub_mean <- mean(v1$RIGHT_PUPIL_SIZE)
+  
+  #z-score calculation
+  x <- min(which(poo$subID==subs[j]))
+  xx <- max(which(poo$subID==subs[j]))
+  poo$zscore[x:xx] <- (v1$RIGHT_PUPIL_SIZE - sub_mean)/sub_sd
+  print(j)
+}
+
+block1 <- subset(poo, TRIAL_INDEX < 241)
+block2 <- subset(poo, TRIAL_INDEX > 240)
+
+## MAKE GRAPHS
+
+#overlay timecourse block 1
+coo <- ddply(block1,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    scale_y_continuous(limits=c(0,.5),breaks=seq(0,.5,.05))+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse Block 1 (Triplet)")+
+    labs(x = "Time (ms)", y = "Z-score from average of entire experiment")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+geom_vline(xintercept = 500,linetype = "longdash")
+
+#overlay timecourse block 2
+goo <- ddply(block2,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+goo2 <- ddply(goo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(goo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.r)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse Block 2 (Random)")+
+    labs(x = "Time (ms)", y = "Z-score from average of entire experiment")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.r)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-.5,0),breaks=seq(-.5,0,.1))
+
+#timecourse block 1 + block 2 overlay
+coo1 <- ddply(block1,.(subID,TIMECODE2),summarise,meanpupil=mean(zscore,na.rm = TRUE)) 
+coo2 <- ddply(block2,.(subID,TIMECODE2),summarise,meanpupil=mean(zscore,na.rm = TRUE)) 
+coo1$block <- 1
+coo2$block <- 2
+coo3 <- ddply(coo1,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+coo4 <- ddply(coo2,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+coo5 <- rbind(coo3,coo4)
+
+ggplot(coo5,aes(x=TIMECODE2,y=meanPUPIL,color=factor(block),fill=factor(block)))+geom_line()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("Timecourse")+
+  labs(x = "Time (ms)", y = "Z-score from average of entire experiment")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = a, linetype = "longdash")+geom_vline(xintercept = aa, size =1)+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.4)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  theme(strip.text = element_text(size=16))+
+  guides(color=FALSE)+
+  scale_fill_discrete(name="Block",breaks=c("1","2"),labels=c("Triplet", "Random"))+
+  scale_y_continuous(limits=c(-.5,.5),breaks=seq(-.5,.5,.1))
+
+```
+
+Z-score pupil size for each block
+```{r}
+poo <- orig2
+block1 <- subset(poo, TRIAL_INDEX < 241)
+block1$zscore <- 1
+block2 <- subset(poo, TRIAL_INDEX > 240)
+block2$zscore <- 1
+subs <- unique(poo$subID)
+
+#for block1
+for (j in 1:length(subs)) {
+  #for each subject, in block1
+  v1 <- subset(block1, subID==subs[j])  
+  sub_sd <- sd(v1$RIGHT_PUPIL_SIZE)*sqrt((length(v1$RIGHT_PUPIL_SIZE)-1)/(length(v1$RIGHT_PUPIL_SIZE)))
+  sub_mean <- mean(v1$RIGHT_PUPIL_SIZE)
+  
+  #z-score calculation
+  x <- min(which(block1$subID==subs[j]))
+  xx <- max(which(block1$subID==subs[j]))
+  block1$zscore[x:xx] <- (v1$RIGHT_PUPIL_SIZE - sub_mean)/sub_sd
+  print(j)
+}
+
+#for block2
+for (j in 1:length(subs)) {
+  #for each subject, in block2
+  v1 <- subset(block2, subID==subs[j])  
+  sub_sd <- sd(v1$RIGHT_PUPIL_SIZE)*sqrt((length(v1$RIGHT_PUPIL_SIZE)-1)/(length(v1$RIGHT_PUPIL_SIZE)))
+  sub_mean <- mean(v1$RIGHT_PUPIL_SIZE)
+  
+  #z-score calculation
+  x <- min(which(block2$subID==subs[j]))
+  xx <- max(which(block2$subID==subs[j]))
+  block2$zscore[x:xx] <- (v1$RIGHT_PUPIL_SIZE - sub_mean)/sub_sd
+  print(j)
+}
+
+## MAKE GRAPHS
+
+#overlay timecourse block 1
+coo <- ddply(block1,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse Block 1 (Triplet)")+
+    labs(x = "Time (ms)", y = "Z-score from block average")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-.2,.2),breaks=seq(-.2,.2,.05))
+
+#overlay timecourse block 2
+goo <- ddply(block2,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+goo2 <- ddply(goo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(goo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.r)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse Block 2 (Random)")+
+    labs(x = "Time (ms)", y = "Z-score from block average")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.r)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-.2,.2),breaks=seq(-.2,.2,.05))
+
+#timecourse block 1 + block 2 overlay
+coo1 <- ddply(block1,.(subID,TIMECODE2),summarise,meanpupil=mean(zscore,na.rm = TRUE)) 
+coo2 <- ddply(block2,.(subID,TIMECODE2),summarise,meanpupil=mean(zscore,na.rm = TRUE)) 
+coo1$block <- 1
+coo2$block <- 2
+coo3 <- ddply(coo1,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+coo4 <- ddply(coo2,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+coo5 <- rbind(coo3,coo4)
+
+ggplot(coo5,aes(x=TIMECODE2,y=meanPUPIL,color=factor(block),fill=factor(block)))+geom_line()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("Timecourse")+
+  labs(x = "Time (ms)", y = "Z-score from block average")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = a, linetype = "longdash")+geom_vline(xintercept = aa, size =1)+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.4)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  theme(strip.text = element_text(size=16))+
+  guides(color=FALSE)+
+  scale_fill_discrete(name="Block",breaks=c("1","2"),labels=c("Triplet", "Random"))+
+  scale_y_continuous(limits=c(-.2,.2),breaks=seq(-.2,.2,.05))
+
+```
+
+Z-score pupil size for each triplet trial
+```{r}
+poo <- orig2
+subs <- unique(poo$subID)
+poo$zscore <- 1
+
+for (j in 1:length(subs)) {
+  trials <- unique(poo$TRIP_TRIAL_INDEX[poo$subID==subs[j]])
+  print(j)
+for (i in 1:length(trials)) {
+  #for each trial
+  sub_sd <- sd(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[j] & poo$TRIP_TRIAL_INDEX==trials[i]])*sqrt ((length(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[j] & poo$TRIP_TRIAL_INDEX==trials[i]])-1) /(length(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[j] & poo$TRIP_TRIAL_INDEX==trials[i]])))
+  sub_mean <- mean(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[j] & poo$TRIP_TRIAL_INDEX==trials[i]])
+  #z-score calculation
+  poo$zscore[poo$TRIP_TRIAL_INDEX == trials[i] & poo$subID == subs[j]] <- (poo$RIGHT_PUPIL_SIZE[poo$TRIP_TRIAL_INDEX == trials[i] & poo$subID == subs[j]] - sub_mean)/sub_sd
+}}
+
+block1 <- subset(poo, TRIAL_INDEX < 241)
+block2 <- subset(poo, TRIAL_INDEX > 240)
+
+## MAKE GRAPHS
+
+#overlay timecourse block 1
+coo <- ddply(block1,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse Block 1 (Triplet)")+
+    labs(x = "Time (ms)", y = "Z-score from average of triplet trial")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-0.4,.4),breaks=seq(-0.4,.4,.1))
+
+#overlay timecourse block 2
+goo <- ddply(block2,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+goo2 <- ddply(goo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(goo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.r)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse Block 2 (Random)")+
+    labs(x = "Time (ms)", y = "Z-score from average of triplet trial")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.r)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-.4,.4),breaks=seq(-.4,0.4,.1))
+
+#timecourse block 1 + block 2 overlay
+coo1 <- ddply(block1,.(subID,TIMECODE2),summarise,meanpupil=mean(zscore,na.rm = TRUE)) 
+coo2 <- ddply(block2,.(subID,TIMECODE2),summarise,meanpupil=mean(zscore,na.rm = TRUE)) 
+coo1$block <- 1
+coo2$block <- 2
+coo3 <- ddply(coo1,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+coo4 <- ddply(coo2,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+coo5 <- rbind(coo3,coo4)
+
+ggplot(coo5,aes(x=TIMECODE2,y=meanPUPIL,color=factor(block),fill=factor(block)))+geom_line()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("Timecourse")+
+  labs(x = "Time (ms)", y = "Z-score from average of triplet trial")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = a, linetype = "longdash")+geom_vline(xintercept = aa, size =1)+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.4)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  theme(strip.text = element_text(size=16))+
+  guides(color=FALSE)+
+  scale_fill_discrete(name="Block",breaks=c("1","2"),labels=c("Triplet", "Random"))+
+  scale_y_continuous(limits=c(-.5,.5),breaks=seq(-.5,.5,.1))
+```
+
+Oranges V1 z-score
+```{r}
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+library(RColorBrewer)
+library(lmerTest)
+#orig <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/Oranges_famphase5.csv")
+#orig$X <- NULL
+#saveRDS(orig, "OrangesV1.rds")
+
+orig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/OrangesV1.rds")
+orig$X.1 <- NULL
+color.t <- c("#FFCC00", "#ff9900","#FF6600") #triplet position
+color.r <- c("#0099ff", "#0066ff","#0033ff") #triplet position
+a = c(500,1750,3000)
+aa = c(1250,2500)
+b = c("#ff9900","#0066ff") #condition
+
+#Z-score per subject
+poo <- orig
+subs <- unique(poo$sub)
+poo$zscore <- 1
+
+for (j in 1:length(subs)) {
+  #for each subject
+  v1 <- subset(poo, sub==subs[j])  
+  sub_sd <- sd(v1$RIGHT_PUPIL_SIZE, na.rm = TRUE)* sqrt((length(v1$RIGHT_PUPIL_SIZE)-1)/(length(v1$RIGHT_PUPIL_SIZE)))
+  sub_mean <- mean(v1$RIGHT_PUPIL_SIZE,na.rm = TRUE)
+  
+  #z-score calculation
+  x <- min(which(poo$sub==subs[j]))
+  xx <- max(which(poo$sub==subs[j]))
+  poo$zscore[x:xx] <- (v1$RIGHT_PUPIL_SIZE - sub_mean)/sub_sd
+  print(j)
+}
+
+## MAKE GRAPHS
+
+#timecourse
+coo <- ddply(poo,.(sub,TIMECODE2,image),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(TIMECODE2,image),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE2,y=meanPUPIL,color=factor(image),fill=factor(image)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse OrangesV1")+
+    labs(x = "Time (ms)", y = "Z-score from average of entire experiment")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-0.4,.3),breaks=seq(-0.4,.3,.1))
+
+#Z-score per triplet
+poo <- orig
+subs <- unique(poo$sub)
+poo$zscore <- 1
+
+for (j in 44:length(subs)) {
+  trials <- unique(poo$triplet_trialindex[poo$sub==subs[j]])
+  print(j)
+for (i in 1:length(trials)) {
+  #for each trial
+  sub_sd <- sd(poo$RIGHT_PUPIL_SIZE[poo$sub==subs[j] & poo$triplet_trialindex==trials[i]],na.rm = TRUE)*sqrt((length(poo$RIGHT_PUPIL_SIZE[poo$sub==subs[j] & poo$triplet_trialindex==trials[i]])-1) /(length(poo$RIGHT_PUPIL_SIZE[poo$sub==subs[j] & poo$triplet_trialindex==trials[i]])))
+  sub_mean <- mean(poo$RIGHT_PUPIL_SIZE[poo$sub==subs[j] & poo$triplet_trialindex==trials[i]], na.rm = TRUE)
+  #z-score calculation
+  poo$zscore[poo$triplet_trialindex == trials[i] & poo$sub == subs[j]] <- (poo$RIGHT_PUPIL_SIZE[poo$triplet_trialindex == trials[i] & poo$sub == subs[j]] - sub_mean)/sub_sd
+}}
+
+#timecourse
+coo <- ddply(poo,.(sub,TIMECODE2,image),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(TIMECODE2,image),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE2,y=meanPUPIL,color=factor(image),fill=factor(image)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse OrangesV1")+
+    labs(x = "Time (ms)", y = "Z-score from average of triplet trial")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-0.5,.5),breaks=seq(-0.5,.5,.1))
+```
+
+Oranges V2 z-score
+```{r}
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+library(RColorBrewer)
+library(lmerTest)
+
+orig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/OrangesV2/Data/OrangesV2.rds")
+#coding accuracy
+orig$accuracy <- 0
+orig$accuracy[orig$subaccuracy > 0.6] <- 1
+orig$X.2 <- NULL 
+orig$X.1 <- NULL 
+poo <- subset(orig, subaccuracy > 0.35 & TIMECODE < 1251) #2 subjects really bad accuracy
+
+color.t <- c("#FFCC00", "#ff9900","#FF6600") #triplet position
+color.r <- c("#0099ff", "#0066ff","#0033ff") #triplet position
+a = c(500,1750,3000)
+aa = c(1250,2500)
+b = c("#ff9900","#0066ff") #condition
+
+#Z-score per subject
+subs <- unique(poo$subID)
+poo$zscore <- 1
+
+for (j in 1:length(subs)) {
+  #for each subject
+  v1 <- subset(poo, subID==subs[j])  
+  sub_sd <- sd(v1$RIGHT_PUPIL_SIZE, na.rm = TRUE)* sqrt((length(v1$RIGHT_PUPIL_SIZE)-1)/(length(v1$RIGHT_PUPIL_SIZE)))
+  sub_mean <- mean(v1$RIGHT_PUPIL_SIZE,na.rm = TRUE)
+  
+  #z-score calculation
+  x <- min(which(poo$subID==subs[j]))
+  xx <- max(which(poo$subID==subs[j]))
+  poo$zscore[x:xx] <- (v1$RIGHT_PUPIL_SIZE - sub_mean)/sub_sd
+  print(j)
+}
+
+## MAKE GRAPHS
+
+#timecourse
+coo <- ddply(poo,.(subID,TIMECODE,imagetype),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(TIMECODE,imagetype),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imagetype),fill=factor(imagetype)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse OrangesV2")+
+    labs(x = "Time (ms)", y = "Z-score from average of entire experiment")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-0.4,.2),breaks=seq(-0.4,.2,.1))
+
+#accuracy
+coo <- ddply(poo,.(subID,TIMECODE,accuracy,imagetype),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(accuracy,TIMECODE,imagetype),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imagetype),fill=factor(imagetype)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse OrangesV2")+
+    labs(x = "Time (ms)", y = "Z-score from average of entire experiment")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-0.4,.3),breaks=seq(-0.4,.3,.1))+
+    facet_wrap(~accuracy)
+  
+##Z-score per pair
+poo <- subset(orig, subaccuracy > 0.35 & TIMECODE < 1251)
+subs <- unique(poo$subID)
+poo$zscore <- 1
+
+for (j in 1:length(subs)) {
+  trials <- unique(poo$timesseen[poo$subID==subs[j]])
+  print(j)
+for (i in 1:length(trials)) {
+  #for each pair trial
+  sub_sd <- sd(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[j] & poo$timesseen==trials[i]],na.rm = TRUE)*sqrt((length(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[j] & poo$timesseen==trials[i]])-1) /(length(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[j] & poo$timesseen==trials[i]])))
+  sub_mean <- mean(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[j] & poo$timesseen==trials[i]], na.rm = TRUE)
+  #z-score calculation
+  poo$zscore[poo$timesseen == trials[i] & poo$subID == subs[j]] <- (poo$RIGHT_PUPIL_SIZE[poo$timesseen == trials[i] & poo$subID == subs[j]] - sub_mean)/sub_sd
+}}
+
+#timecourse
+coo <- ddply(poo,.(subID,TIMECODE,imagetype),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(TIMECODE,imagetype),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imagetype),fill=factor(imagetype)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse OrangesV2")+
+    labs(x = "Time (ms)", y = "Z-score from average of pair")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-0.4,.3),breaks=seq(-0.4,.3,.1))
+  
+#accuracy
+coo <- ddply(poo,.(subID,TIMECODE,accuracy,imagetype),summarise,meanpupil=mean(zscore,na.rm = TRUE))
+coo2 <- ddply(coo,.(accuracy,TIMECODE,imagetype),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imagetype),fill=factor(imagetype)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse OrangesV2")+
+    labs(x = "Time (ms)", y = "Z-score from average of pair")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+
+    geom_vline(xintercept = 500,linetype = "longdash")+
+    scale_y_continuous(limits=c(-0.4,.3),breaks=seq(-0.4,.3,.1))+
+    facet_wrap(~accuracy)
+  
+```

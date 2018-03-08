@@ -1,0 +1,335 @@
+---
+title: "O_Mixed_Preprocessing"
+author: "Felicia Zhang"
+date: 'July 29 2017'
+output: html_document
+---
+
+```{r}
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+
+#1. Read in data
+raw.data1 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_1.csv")
+raw.data2 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_4-6.csv")
+raw.data3 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_7-9.csv")
+raw.data4 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_10-12.csv")
+raw.data5 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_13-15.csv")
+raw.data6 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_16-18.csv")
+raw.data7 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_19-20.csv")
+raw.data8 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_22-25.csv")
+raw.data9 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_26-28.csv")
+raw.data10 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_29-31.csv")
+raw.data11 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_33-35.csv")
+raw.data12 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_36.csv")
+raw.data13 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_38.csv")
+raw.data14 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_39.csv")
+raw.data15 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_41.csv")
+raw.data16 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_42-43.csv")
+raw.data17 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_45-47.csv")
+raw.data18 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_48-50.csv")
+raw.data19 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/original/OMix_51-53.csv")
+
+orig <- rbind(raw.data1,raw.data2,raw.data3,raw.data4,raw.data5,raw.data6,raw.data7,raw.data8,raw.data9,raw.data10,raw.data12,raw.data12,raw.data13,raw.data14,raw.data15,raw.data16,raw.data17,raw.data18,raw.data19)
+
+poo <- orig
+
+```
+
+Task: 3000ms blank screen before start of experiment
+500ms blank screen, 750ms image
+
+poo1 = raw pupil
+poo2 = after filling in blinks
+poo3 = after reducing timecode to only 0-1250ms
+poo4 = after removing outliers that are more than 2.5 SD away from mean
+poo5 = after removing trials with more than 50% missing
+poo6 = after removing subjects with more than 25% missing
+
+Preparing
+```{r}
+#1. Class conversions
+poo$RIGHT_PUPIL_SIZE <- as.numeric(as.character(poo$RIGHT_PUPIL_SIZE))
+poo$RIGHT_GAZE_X <- as.numeric(as.character(poo$RIGHT_GAZE_X))
+poo$RIGHT_GAZE_Y <- as.numeric(as.character(poo$RIGHT_GAZE_Y))
+
+#the warnings appear bc of converting . to NA, which is correct
+length(which(orig$RIGHT_PUPIL_SIZE=="."))
+length(which(is.na(poo$RIGHT_PUPIL_SIZE)))
+
+#2. Assigning each subject a number for subID so it's easier to index 
+poo$subID <- 0
+subs <- unique(poo$RECORDING_SESSION_LABEL)
+for (i in 1:length(subs)){
+poo$subID[poo$RECORDING_SESSION_LABEL == subs[i]] <- i  
+}
+unique(poo$subID)
+
+#3. relabel beginning baseline as trial 0
+poo$SAMPLE_MESSAGE <- as.character(poo$SAMPLE_MESSAGE)
+subs <- unique(poo$subID)
+for (j in 1:length(subs)) {
+  trials <- unique(poo$TRIAL_INDEX[poo$subID==subs[j]])
+  y <- min(which(poo$subID==subs[j]))
+  yy <- which(poo$SAMPLE_MESSAGE[poo$subID==subs[j]]=="BASELINEEND")
+  yyy <- y+yy-1
+  poo$TRIAL_INDEX[y:yyy] <- 0
+  print(j)
+}
+  
+#4. Standardize time 
+subs <- unique(poo$subID)
+for (j in 1:length(subs)) {
+  trials <- unique(poo$TRIAL_INDEX[poo$subID==j])
+  print(j)
+for (i in 1:length(trials)) {
+  times = poo$TIMESTAMP[poo$subID == subs[j] & poo$TRIAL_INDEX == trials[i]] #gets the timestamp for a trial for a subject
+  start = min(times) #finds the smallest timestamp
+  poo$TIMECODE[poo$subID == subs[j] & poo$TRIAL_INDEX == trials[i]] = poo$TIMESTAMP[poo$subID == subs[j] & poo$TRIAL_INDEX == trials[i]] - start
+}}
+
+#5. Check hertz recorded at 
+for (i in 1:length(unique(poo$subID))) {
+blah <- subset(poo, subID == i)
+print(i)
+print(head(blah$TIMECODE))
+}
+
+#subID 38 is bad
+
+#6. Convert pupil area to diameter for certain participants 
+# diameter = 256 * sqrt(area / Pi)
+diameter <- function (x) {
+  256*sqrt(x/pi)
+}
+
+subs <- unique(poo$subID)
+for (i in 1:length(subs)){
+summary(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[i]])
+a <- summary(poo$RIGHT_PUPIL_SIZE[poo$subID==subs[i]])
+if (a[4] < 1000){ #meaning it's recorded in area
+  start <- min(which(poo$subID==subs[i])) #find start of that participant
+  end <- max(which(poo$subID==subs[i])) #find end of that participant
+  poo$RIGHT_PUPIL_SIZE[start:end] <- sapply(poo$RIGHT_PUPIL_SIZE[start:end],diameter) 
+}}
+
+summary(poo$RIGHT_PUPIL_SIZE)
+
+#7. Remove Trial_Index 0
+poo2 <- subset(poo, TRIAL_INDEX > 0)
+
+#TIMECODE2 = time of triplet 0 - 3750ms
+poo3 <- subset(poo2, TIMECODE < 1251) #only keep 0-1250ms per image
+poo3$X <- 1:length(poo3$TIMESTAMP)
+poo3$TIMECODE2 <- 99999 
+q <- length(poo3$TIMECODE)
+c <- length(unique(poo3$subID))
+poo3$TIMECODE2[1:q] <- rep(seq(0,3754, by=2), times = 480*c)
+goo <- subset(poo3, TIMECODE==0 | TIMECODE == 1250 ) #checking to make sure timecodes line up
+
+#TRIAL_INDEX_2 = triplet trial index 
+poo3$TRIP_TRIAL_INDEX <- 9999
+for (i in 1:160) { 
+  if (i==1) {
+  poo3$TRIP_TRIAL_INDEX[poo3$TRIAL_INDEX < 3*i+1] <- i
+  } else
+  poo3$TRIP_TRIAL_INDEX[poo3$TRIAL_INDEX < 3*i+1 & poo3$TRIAL_INDEX > 3*(i-1)] <- i
+}
+
+#block (1=TRIPLET, 2=RANDOM)
+poo3$block <- 1
+poo3$block[poo3$TRIAL_INDEX > 240] <- 2
+
+#imageseq (1=first in triplet, 2...3...)
+poo3$imageseq <- 0
+subs <- unique(poo3$subID)
+for (j in 1:length(subs)) {
+q <- min(which(poo3$subID==subs[j]))
+qq <- max(which(poo3$subID==subs[j]))
+poo3$imageseq[q:qq] <- rep(rep(1:3, each=626), times=160)
+}
+poo3$imageseq[poo3$TRIAL_INDEX_2 > 240] <- 0
+
+#timesseen (number of times seen each triplet) (max 20 times)
+poo3$timesseen <- 9999
+for (i in 1:20) { 
+  if (i==1) {
+  poo3$timesseen[poo3$TRIAL_INDEX < 12*i+1] <- i
+  } else
+  poo3$timesseen[poo3$TRIAL_INDEX < 12*i+1 & poo3$TRIAL_INDEX > 12*(i-1)] <- i
+}
+poo3$timesseen[poo3$TRIAL_INDEX > 240] <- 0
+
+#make sure all the trial info is correct
+goo <- ddply(poo3,.(TRIAL_INDEX,TRIP_TRIAL_INDEX,imageseq,timesseen),summarise,meanpupil=mean(RIGHT_PUPIL_SIZE,na.rm = TRUE)) 
+View(goo)
+
+write.csv(poo2, "OMixed_preprocessed_0-1250.csv", row.names=TRUE) 
+#preprocessed_all has timecode and pupil area corrected
+```
+
+Interpolating
+```{r}
+#Fill in blinks
+#blinks were identified using Eyelink
+#The duration of a blink is on average 100-150 milliseconds according to UCL researcher (conservative)
+#between 100-400ms according to the Harvard Database of Useful Biological Numbers (liberal)
+
+poo2 <- data.table(poo2) #converts data.frame to data.table, faster to manipulate with large data
+poo2 <- poo2[, orig := .I] #creates column called 'orig' with row index
+  
+yoo <- data.frame(RECORDING_SESSION_LABEL= character(), HTARGET_X= numeric(),HTARGET_Y= numeric(),LEFT_GAZE_X= numeric(),LEFT_GAZE_Y= numeric(),LEFT_IN_BLINK= numeric(),LEFT_PUPIL_SIZE= numeric(),RIGHT_GAZE_X= numeric(),RIGHT_GAZE_Y= numeric(),RIGHT_IN_BLINK= numeric(),RIGHT_PUPIL_SIZE= numeric(),SAMPLE_INDEX= numeric(),SAMPLE_MESSAGE= character(),TIMESTAMP= numeric(),TRIAL_INDEX= numeric(),image= numeric(),subID= numeric(),TIMECODE= numeric(),TIMECODE2= numeric(),TRIP_TRIAL_INDEX= numeric(),block= numeric(),imageseq= numeric(),timesseen= numeric(),orig= numeric(),rleLength= numeric())
+
+subs <- unique(poo2$subID)
+for (i in 1:length(subs)) { #for each subject
+  poo3 <- subset(poo2, subID==subs[i])
+  poo3 <- poo3[, rleLength := {rr <- rle(is.na(poo3$RIGHT_PUPIL_SIZE)); rep(rr$length, rr$length)}]
+  #create column rleLength that counts consecutive filled or NA values (figure out how long NA values are)
+  yoo <- rbind(yoo,poo3)
+}
+
+poo2 <- yoo
+
+#Only fill in NA gaps with length < 200 (200 samples = 400ms)
+poo2$RIGHT_PUPIL_SIZE <- with(poo2, ifelse(rleLength < 200, na.approx(RIGHT_PUPIL_SIZE), RIGHT_PUPIL_SIZE))
+
+```
+
+Outliers
+```{r}
+#plot raw pupil, just visualizing the data first
+boo1 <- ddply(poo2,.(subID,block,TIMECODE2),summarise,pupilsize=mean(RIGHT_PUPIL_SIZE,na.rm = TRUE)) #collapse across trials
+boo2 <- ddply(boo1,.(block,TIMECODE2),summarise,PUPIL=mean(pupilsize,na.rm = TRUE),sePupil=sd(pupilsize, na.rm = TRUE)/sqrt(length(pupilsize))) #collapse across subs
+boo2$preprocessing <- 0
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+ggplot(boo2,aes(x=TIMECODE2,y=PUPIL,color=factor(block),fill=factor(block)))+
+  geom_line()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse: Raw Pupil Size (No Preprocessing)")+
+  labs(x = "Time", y = "Pupil change (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  geom_ribbon(aes(ymin=PUPIL-sePupil,ymax=PUPIL+sePupil),alpha=0.4)+
+  geom_vline(xintercept = a, linetype = "longdash")+geom_vline(xintercept = aa, size =1)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  scale_y_continuous(limits=c(2000,4000),breaks=seq(2000,4000,500))+
+  scale_fill_discrete(name="Block",breaks=c("1","2"),labels=c("triplet", "random"))+
+  guides(color=FALSE)
+
+#1. Remove trials: more than 50% were bad
+poo <- poo2
+subs <- unique(poo2$subID)
+poo2$percentmissing <- 999
+for (j in 39:length(subs)) {
+  trials <- unique(poo2$TRIAL_INDEX[poo2$subID==subs[j]])
+  print(j)
+for (i in 1:length(trials)) {
+  p.missing <- length(which(is.na(poo2$RIGHT_PUPIL_SIZE[poo2$TRIAL_INDEX==trials[i] & poo2$subID==subs[j]])))/length(poo2$RIGHT_PUPIL_SIZE[poo2$TRIAL_INDEX==trials[i] & poo2$subID==subs[j]])*100
+  b <- min(which(poo2$TRIAL_INDEX==trials[i] & poo2$subID==subs[j]))
+  bb <- max(which(poo2$TRIAL_INDEX==trials[i] & poo2$subID==subs[j]))
+  poo2$percentmissing[b:bb] <- p.missing
+}}
+
+#plot 
+boo3 <- ddply(poo3,.(subID,block,TIMECODE2),summarise,pupilsize=mean(RIGHT_PUPIL_SIZE,na.rm = TRUE)) #collapse across trials
+boo4 <- ddply(boo3,.(block,TIMECODE2),summarise,PUPIL=mean(pupilsize,na.rm = TRUE),sePupil=sd(pupilsize, na.rm = TRUE)/sqrt(length(pupilsize))) #collapse across subs
+boo4$preprocessing <- 1
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+boo5 <- rbind(boo2,boo4)
+
+#total overlap
+ggplot(boo5,aes(x=TIMECODE2,y=PUPIL,color=factor(preprocessing),fill=factor(preprocessing)))+
+  geom_line()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse: Raw Pupil Size (After removing bad trials)")+
+  labs(x = "Time", y = "Pupil change (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  geom_ribbon(aes(ymin=PUPIL-sePupil,ymax=PUPIL+sePupil),alpha=0.4)+
+  geom_vline(xintercept = a, linetype = "longdash")+geom_vline(xintercept = aa, size =1)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  scale_y_continuous(limits=c(2000,4000),breaks=seq(2000,4000,500))+
+  scale_fill_discrete(name="Preprocessing",breaks=c("0","1"),labels=c("None", "Remove bad trials"))+
+  guides(color=FALSE)+facet_wrap(~block)
+
+#2. Remove subjects: more than 25% of data were bad
+subs <- unique(poo2$subID)
+poo2$percentmissing.sub <- 999
+for (j in 1:length(subs)) {
+  p.missing <- length(which(is.na(poo2$RIGHT_PUPIL_SIZE[poo2$subID==subs[j]])))/length(poo2$RIGHT_PUPIL_SIZE[poo2$subID==subs[j]])*100
+  b <- min(which(poo2$subID==subs[j]))
+  bb <- max(which(poo2$subID==subs[j]))
+  poo2$percentmissing.sub[b:bb] <- p.missing
+  print(j)
+}
+
+write.csv(poo2, "OMix_preprocessed_outliersnotremoved.csv", row.names=TRUE)
+
+#removing at the end
+poo3 <- subset(poo2, percentmissing < 50) #keep trials with less than 50% bad
+poo4 <- subset(poo3, percentmissing.sub < 25)  #keep subjects with less than 25% bads
+#highest percent missing data was 3% so didn't remove any subjects
+
+write.csv(poo4, "OMix_preprocessed_outliersremoved.csv", row.names=TRUE)
+
+```
+
+Calculate change from baseline
+```{r}
+poo4 =  read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mixed/Data/All/preprocessed/OMix_preprocessed_outliersremoved.csv")
+poo4$X <- NULL
+poo4$X.1 <- NULL
+
+#1. PUPIL_CORRECTED = Baseline to each image's anticipatory period (using the 500ms at the start of every trial)
+poo4$SAMPLE_MESSAGE <- as.character(poo4$SAMPLE_MESSAGE)
+
+pooC <- poo4
+subs <- unique(pooC$subID)
+
+for (j in 1:length(subs)) {
+  trials <- unique(pooC$TRIAL_INDEX[pooC$subID==subs[j]])
+  print(j)
+for (i in 1:length(trials)) {
+  #use first 500ms of trial
+  start <- min(which(pooC$subID==subs[j] & pooC$TRIAL_INDEX==trials[i]))
+  end <- start+249 
+  baseline <- pooC$RIGHT_PUPIL_SIZE[start:end] #gets all the pupil size during that period
+  baselineavg <- mean(baseline, na.rm = TRUE) #baseline avg
+  pooC$PUPIL_CORRECTED[pooC$TRIAL_INDEX == trials[i] & pooC$subID == subs[j]] <- (pooC$RIGHT_PUPIL_SIZE[pooC$TRIAL_INDEX == trials[i] & pooC$subID == subs[j]] - baselineavg) / baselineavg
+}}
+
+#2. PUPIL_CORRECTED_2 = baseline to first image in triplet, even in random block
+subs <- unique(pooC$subID)
+for (j in 1:length(subs)) {
+  trials <- unique(pooC$TRIP_TRIAL_INDEX[pooC$subID==subs[j]])
+  print(j)
+for (i in 1:length(trials)) { 
+  start <- min(which(pooC$subID==subs[j] & pooC$TRIP_TRIAL_INDEX==trials[i]))
+  end <- start+249 #anticipatory period for image 1
+  baseline <- pooC$RIGHT_PUPIL_SIZE[start:end] #gets all the pupil size during that period
+  baselineavg <- mean(baseline, na.rm = TRUE) #baseline avg
+  pooC$PUPIL_CORRECTED_2[pooC$TRIP_TRIAL_INDEX == trials[i] & pooC$subID == subs[j]] <- (pooC$RIGHT_PUPIL_SIZE[pooC$TRIP_TRIAL_INDEX == trials[i] &pooC$subID == subs[j]] - baselineavg) / baselineavg  
+}}
+
+#replace infinite value with NA
+is.na(pooC$PUPIL_CORRECTED) <- sapply(pooC$PUPIL_CORRECTED, is.infinite)
+is.na(pooC$PUPIL_CORRECTED_2) <- sapply(pooC$PUPIL_CORRECTED_2, is.infinite)
+
+write.csv(pooC, "OMixed_preprocessed_done.csv", row.names=TRUE) 
+```

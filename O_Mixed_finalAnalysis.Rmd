@@ -1,0 +1,593 @@
+---
+title: "O Mixed Analysis"
+author: "Felicia Zhang"
+date: 'July 29 2017'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+library(RColorBrewer)
+library(lmerTest)
+
+#1. load data (master)
+# orig <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/All/preprocessed/OMixed_preprocessed_final.csv")   
+# orig$X <- NULL
+# 
+# saveRDS(orig, "OMix.rds")
+
+orig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/AV_Mix/Data/V2/AVMix.rds")
+
+#pupil corrected = baseline is each image
+#pupil corrected 2 = baseline first image of triplet
+#block = 1 = triplet, 2 = random
+#imageseq = first, second or third image in triplet
+#timesseen = times seen the triplet (range 1- 20)
+#TRIP_TRIAL_INDEX = correct triplet trial number
+#TIMECODE2 = correct 0 - 3754ms
+
+#colors
+color.t <- c("#FFCC00", "#ff9900","#FF6600") #triplet position
+color.r <- c("#0099ff", "#0066ff","#0033ff") #triplet position
+a = 500
+b = c("#ff9900","#0066ff") #condition
+
+block1 <- subset(orig, TRIAL_INDEX < 241)
+block2 <- subset(orig, TRIAL_INDEX > 240)
+
+#for every subject, print number of trials
+for (i in 1:length(unique(orig$subID))) {
+blah <- subset(orig, subID == i)
+print(i)
+print(length(unique(blah$TRIAL_INDEX)))
+}
+```
+
+Summary graphs
+```{r}
+#Preprocessing: removed trials with more than 50% missing, removed subjects with more than 25% missing now we have 40/53 subs
+
+#number of trials in each block
+foo <- ddply(orig,.(subID,block),summarise,numoftrials=length(unique(TRIAL_INDEX))) 
+
+ggplot(foo,aes(x=factor(subID),y=numoftrials,color=factor(block),fill=factor(block)))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_bar(stat="identity")+ggtitle("Number of trials completed per subject")+
+  labs(x = "Subject ID", y = "Number of trials")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  geom_hline(yintercept = 480, size =1)+geom_hline(yintercept = 240, size =1)
+
+#X and Y coordinate
+#block 1
+
+#calculation avg gaze x and gaze y position during that period
+doo <- ddply(block1,.(subID,TRIAL_INDEX),summarise,meanY=mean(RIGHT_GAZE_Y,na.rm = TRUE),meanX=mean(RIGHT_GAZE_X,na.rm = TRUE)) 
+
+ggplot(doo,aes(x=meanX,y=meanY,color=factor(subID),fill=factor(subID)))+
+  geom_point()+ggtitle("Gaze position during block 1")+
+  labs(x = "X coordinate", y = "Y coordinate")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,300),position="top")+
+  scale_y_reverse(limits = c(1024, 0))
+
+doo <- ddply(block2,.(subID,TRIAL_INDEX),summarise,meanY=mean(RIGHT_GAZE_Y,na.rm = TRUE),meanX=mean(RIGHT_GAZE_X,na.rm = TRUE)) 
+
+ggplot(doo,aes(x=meanX,y=meanY,color=factor(subID),fill=factor(subID)))+
+  geom_point()+ggtitle("Gaze position during block 2")+
+  labs(x = "X coordinate", y = "Y coordinate")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,300),position="top")+
+  scale_y_reverse(limits = c(1024, 0))
+
+#not everyone is looking at the center of the screen...
+
+```
+
+Only keep looks to center
+~ 400 x 400 box
+``` {r}
+#screen dimensions of screen are 1280 x 1024 and image itself is 250 x 250 pixels 
+orig2 <- orig
+a <- which(orig2$RIGHT_GAZE_X < 440)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_Y < 312)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_X > 840)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_Y > 712)
+orig2 <- orig2[-c(a), ]
+
+block1 <- subset(orig2, TRIAL_INDEX < 241)
+block2 <- subset(orig2, TRIAL_INDEX > 240)
+
+#calculation avg gaze x and gaze y position during that period
+doo <- ddply(block1,.(subID,TRIAL_INDEX),summarise,meanY=mean(RIGHT_GAZE_Y,na.rm = TRUE),meanX=mean(RIGHT_GAZE_X,na.rm = TRUE)) 
+
+ggplot(doo,aes(x=meanX,y=meanY,color=factor(subID),fill=factor(subID)))+
+  geom_point()+ggtitle("Gaze position during block 1")+
+  labs(x = "X coordinate", y = "Y coordinate")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,300),position="top")+
+  scale_y_reverse(limits = c(1024, 0))
+
+doo <- ddply(block2,.(subID,TRIAL_INDEX),summarise,meanY=mean(RIGHT_GAZE_Y,na.rm = TRUE),meanX=mean(RIGHT_GAZE_X,na.rm = TRUE)) 
+
+ggplot(doo,aes(x=meanX,y=meanY,color=factor(subID),fill=factor(subID)))+
+  geom_point()+ggtitle("Gaze position during block 2")+
+  labs(x = "X coordinate", y = "Y coordinate")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  scale_x_continuous(limits=c(0,1280),breaks=seq(0,1280,300),position="top")+
+  scale_y_reverse(limits = c(1024, 0))
+
+#number of trials in each block
+foo <- ddply(orig2,.(subID,block),summarise,numoftrials=length(unique(TRIAL_INDEX))) 
+
+ggplot(foo,aes(x=factor(subID),y=numoftrials,color=factor(block),fill=factor(block)))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_bar(stat="identity")+ggtitle("Number of trials completed per subject (after removing looks not to center)")+
+  labs(x = "Subject ID", y = "Number of trials")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  geom_hline(yintercept = 480, size =1)+geom_hline(yintercept = 240, size =1)
+```
+
+timecourse block 1
+```{r}
+goo <- ddply(block1,.(subID,TIMECODE2),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+
+goo2 <- ddply(goo,.(TIMECODE2),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+ggplot(goo2,aes(x=TIMECODE2,y=meanPUPIL))+geom_line()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("Block 1 (Triplet) Timecourse")+
+  labs(x = "Time (ms)", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = a, linetype = "longdash")+geom_vline(xintercept = aa, size =1)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  theme(strip.text = element_text(size=16))+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.5)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))
+
+#overlay
+coo <- ddply(block1,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+coo2 <- ddply(coo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(coo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.t)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse Block 1 (Triplet)")+
+    labs(x = "Time (ms)", y = "Change from baseline")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.t)+geom_vline(xintercept = 500,linetype = "longdash")
+  
+```
+
+timecourse block 2
+```{r}
+moo <- ddply(block2,.(subID,TIMECODE2),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+
+moo2 <- ddply(moo,.(TIMECODE2),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+ggplot(moo2,aes(x=TIMECODE2,y=meanPUPIL))+geom_line()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("Block 2 (Random) Timecourse")+
+  labs(x = "Time (ms)", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = a, linetype = "longdash")+geom_vline(xintercept = aa, size =1)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  theme(strip.text = element_text(size=16))+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.5)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))
+
+#overlay
+goo <- ddply(block2,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+goo2 <- ddply(goo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+  ggplot(goo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.r)+
+    geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+    scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+
+    guides(color=FALSE)+theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+    ggtitle("Timecourse Block 2 (Random)")+
+    labs(x = "Time (ms)", y = "Change from baseline")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(name="Image",values=color.r)+geom_vline(xintercept = 500,linetype = "longdash")
+```
+
+timecourse block 1 + block 2 overlay
+```{r}
+coo1 <- ddply(block1,.(subID,TIMECODE2),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+coo2 <- ddply(block2,.(subID,TIMECODE2),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+coo1$block <- 1
+coo2$block <- 2
+coo3 <- ddply(coo1,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+coo4 <- ddply(coo2,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+coo5 <- rbind(coo3,coo4)
+
+ggplot(coo5,aes(x=TIMECODE2,y=meanPUPIL,color=factor(block),fill=factor(block)))+geom_line()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("Timecourse")+
+  labs(x = "Time (ms)", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = a, linetype = "longdash")+geom_vline(xintercept = aa, size =1)+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.4)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  theme(strip.text = element_text(size=16))+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+guides(color=FALSE)+
+  scale_fill_discrete(name="Block",breaks=c("1","2"),labels=c("Triplet", "Random"))
+
+```
+
+FINISHED HERE 12/4 
+
+
+times seen triplet for 500ms X accuracy (block 1 vs block 2)
+```{r}
+boo1 <- subset(orig2, TIMECODE2 < 502) #only looking at first 500ms, which is the blank screen
+
+#BLOCK 1
+boo_a <- subset(boo1, block == 1)
+  
+#average pupil size 
+boo2 <- ddply(boo_a,.(subID,imageseq,timesseen),summarise,meanpupil2=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+#remove sub 6
+boo2 <- subset(boo2, subID < 6)
+
+#collapse triplet id
+boo3 <- ddply(boo2,.(imageseq,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+#remove first time seeing image 
+#boo3 <- subset(boo3, timesseen > 1)
+
+#cor.test
+xyz1 <-cor.test(boo3$timesseen[boo3$imageseq==1], boo3$meanpupilSs[boo3$imageseq==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(boo3$timesseen[boo3$imageseq==2], boo3$meanpupilSs[boo3$imageseq==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(boo3$timesseen[boo3$imageseq==3], boo3$meanpupilSs[boo3$imageseq==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$imageseq <- 1:3
+yoo3$comments[1] <- "cor = 0.02, p = 0.9321"
+yoo3$comments[2] <- "cor = 0.17, p = 0.4702"
+yoo3$comments[3] <- "cor = 0.18, p = 0.4408"
+
+ggplot(boo3,aes(x=timesseen,y=meanpupilSs,color=factor(imageseq),fill=factor(imageseq)))+
+  geom_point()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Pupil change during anticipatory period (500ms) (block 1)")+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 20)+
+  facet_wrap(~imageseq)+theme(strip.text = element_text(size=16))+
+  stat_smooth(method=lm)+theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-.1,.15),breaks=seq(-.1,.15,0.05))+
+  geom_text(data=yoo3, aes(x=10, y=0.15, label=comments), colour="black", size = 7)
+  
+#BLOCK 2
+boo_a <- subset(boo1, block == 2)
+boo_a$TRIAL_INDEX <-  boo_a$TRIAL_INDEX -239
+
+boo_a$timesseen <- 9999
+for (i in 1:20) { 
+  if (i==1) {
+  boo_a$timesseen[boo_a$TRIAL_INDEX < 12*i+1] <- i
+  } else
+  boo_a$timesseen[boo_a$TRIAL_INDEX < 12*i+1 & boo_a$TRIAL_INDEX > 12*(i-1)] <- i
+}
+
+#average pupil size 
+boo2 <- ddply(boo_a,.(subID,imageseq,timesseen),summarise,meanpupil2=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+#remove sub 6
+boo2 <- subset(boo2, subID < 6)
+#collapse triplet id
+boo3 <- ddply(boo2,.(imageseq,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+#remove first time seeing image 
+#boo3 <- subset(boo3, timesseen > 1)
+
+#cor.test
+xyz1 <-cor.test(boo3$timesseen[boo3$imageseq==1], boo3$meanpupilSs[boo3$imageseq==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(boo3$timesseen[boo3$imageseq==2], boo3$meanpupilSs[boo3$imageseq==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(boo3$timesseen[boo3$imageseq==3], boo3$meanpupilSs[boo3$imageseq==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$imageseq <- 1:3
+yoo3$comments[1] <- "cor = -0.13, p = 0.5936"
+yoo3$comments[2] <- "cor = 0.17, p = 0.4813"
+yoo3$comments[3] <- "cor = -0.11, p = 0.6333"
+
+ggplot(boo3,aes(x=timesseen,y=meanpupilSs,color=factor(imageseq),fill=factor(imageseq)))+
+  geom_point()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Pupil change during anticipatory period (500ms) (block 2)")+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 20)+
+  facet_wrap(~imageseq)+theme(strip.text = element_text(size=16))+
+  stat_smooth(method=lm)+theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-.1,.15),breaks=seq(-.1,.15,0.05))+
+  geom_text(data=yoo3, aes(x=10, y=0.15, label=comments), colour="black", size = 7)
+  
+```
+
+times seen triplet for 750ms (block 1 vs block 2)
+```{r}
+boo1 <- subset(orig, TIMECODE2 > 499 & TIMECODE2 < 1251) #looking from 500-1250ms
+
+#BLOCK 1
+boo_a <- subset(boo1, block == 1)
+  
+#average pupil size 
+boo2 <- ddply(boo_a,.(subID,imageseq,timesseen),summarise,meanpupil2=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+#remove sub 6
+boo2 <- subset(boo2, subID < 6)
+
+#collapse triplet id
+boo3 <- ddply(boo2,.(imageseq,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+#remove first time seeing image 
+#boo3 <- subset(boo3, timesseen > 1)
+
+#cor.test
+xyz1 <-cor.test(boo3$timesseen[boo3$imageseq==1], boo3$meanpupilSs[boo3$imageseq==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(boo3$timesseen[boo3$imageseq==2], boo3$meanpupilSs[boo3$imageseq==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(boo3$timesseen[boo3$imageseq==3], boo3$meanpupilSs[boo3$imageseq==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$imageseq <- 1:3
+yoo3$comments[1] <- "cor = -0.06, p = 0.7941"
+yoo3$comments[2] <- "cor = -0.024, p = 0.9193"
+yoo3$comments[3] <- "cor = 0.08, p = 0.7382"
+
+ggplot(boo3,aes(x=timesseen,y=meanpupilSs,color=factor(imageseq),fill=factor(imageseq)))+
+  geom_point()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Pupil change during viewing period (750ms) (block 1)")+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 20)+
+  facet_wrap(~imageseq)+theme(strip.text = element_text(size=16))+
+  stat_smooth(method=lm)+theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-.1,.15),breaks=seq(-.1,.15,0.05))+
+  geom_text(data=yoo3, aes(x=10, y=0.15, label=comments), colour="black", size = 7)
+  
+#BLOCK 2
+boo_a <- subset(boo1, block == 2)
+boo_a$TRIAL_INDEX <-  boo_a$TRIAL_INDEX -240
+boo_a <- subset(boo_a, TRIAL_INDEX > 0)
+
+boo_a$timesseen <- 9999
+for (i in 1:20) { 
+  if (i==1) {
+  boo_a$timesseen[boo_a$TRIAL_INDEX < 12*i+1] <- i
+  } else
+  boo_a$timesseen[boo_a$TRIAL_INDEX < 12*i+1 & boo_a$TRIAL_INDEX > 12*(i-1)] <- i
+}
+
+#average pupil size 
+boo2 <- ddply(boo_a,.(subID,imageseq,timesseen),summarise,meanpupil2=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+#remove sub 6
+boo2 <- subset(boo2, subID < 6)
+
+#collapse triplet id
+boo3 <- ddply(boo2,.(imageseq,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+#remove first time seeing image 
+#boo3 <- subset(boo3, timesseen > 1)
+
+#cor.test
+xyz1 <-cor.test(boo3$timesseen[boo3$imageseq==1], boo3$meanpupilSs[boo3$imageseq==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(boo3$timesseen[boo3$imageseq==2], boo3$meanpupilSs[boo3$imageseq==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(boo3$timesseen[boo3$imageseq==3], boo3$meanpupilSs[boo3$imageseq==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$imageseq <- 1:3
+yoo3$comments[1] <- "cor = 0.12, p = 0.6062"
+yoo3$comments[2] <- "cor = -0.45, p = 0.0485"
+yoo3$comments[3] <- "cor = -0.30, p = 0.1987"
+
+ggplot(boo3,aes(x=timesseen,y=meanpupilSs,color=factor(imageseq),fill=factor(imageseq)))+
+  geom_point()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Pupil change during viewing period (750ms) (block 2)")+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 20)+
+  facet_wrap(~imageseq)+theme(strip.text = element_text(size=16))+
+  stat_smooth(method=lm)+theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-.15,.15),breaks=seq(-.15,.15,0.05))+
+  geom_text(data=yoo3, aes(x=10, y=0.15, label=comments), colour="black", size = 7)
+  
+```
+
+Average PDR
+```{r}
+anticipatory <- ddply(subset(poo, TIMECODE < 501),.(RECORDING_SESSION_LABEL,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+anticipatory2 <- ddply(anticipatory,.(imagetype,accuracy),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL)))
+
+viewing <- ddply(subset(poo, TIMECODE > 500 & TIMECODE < 1251 ),.(RECORDING_SESSION_LABEL,imagetype,accuracy),summarise,meanPUPIL=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+viewing2 <- ddply(viewing,.(imagetype,accuracy),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL)))
+
+anticipatory2$phase <- 1
+viewing2$phase <- 2
+
+averagePDR <- rbind(anticipatory2,viewing2)
+
+ggplot(averagePDR,aes(x=factor(imagetype),y=meanPUPILSs,color=factor(accuracy),fill=factor(accuracy)))+geom_bar(stat = "identity",position = "dodge")+
+  scale_y_continuous(labels=percent,limits=c(-0.05,.05),breaks=seq(-0.05,.05,0.01))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("PDR for trial type")+
+  labs(x = "Trial type", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))
+
+phase <- c(`1` = "Anticipation (0-500ms) ",`2` = "Viewing (501-1250ms)")
+limits <- aes(ymax = meanPUPILSs + sePUPIL, ymin=meanPUPILSs - sePUPIL)
+dodge <- position_dodge(width=0.9)
+
+ggplot(averagePDR,aes(x=factor(imagetype),y=meanPUPILSs,color=factor(accuracy),fill=factor(accuracy)))+geom_bar(stat = "identity",position = dodge)+
+  scale_y_continuous(labels=percent,limits=c(-0.02,.02),breaks=seq(-0.02,.02,0.005))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("PDR for trial type")+
+  labs(x = "Trial type", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+facet_wrap(~phase,labeller = as_labeller(phase))+theme(strip.text = element_text(size=16))+
+  geom_errorbar(limits, width=0.25,color="black",position=dodge)+scale_fill_manual(name="Performance",breaks=c("0","1"),labels=c("Below Avg", "Above Avg"),values=b)+guides(color=FALSE)+scale_x_discrete(labels=c("0" = "Unpair", "1" = "Predicting","2" = "Predicted"))+scale_colour_manual(values=b)
+
+#t-test
+one <- subset(anticipatory, imagetype==0)
+t.test(one$meanPUPIL[one$accuracy==1],one$meanPUPIL[one$accuracy==0],var.equal = FALSE)
+#p = 0.2591, unpair anticipatory
+two <- subset(anticipatory, imagetype==1)
+t.test(two$meanPUPIL[two$accuracy==1],two$meanPUPIL[two$accuracy==0],var.equal = FALSE)
+#p = 0.3387, predicting anticipatory
+three <- subset(anticipatory, imagetype==2)
+t.test(three$meanPUPIL[three$accuracy==1],three$meanPUPIL[three$accuracy==0],var.equal = FALSE)
+#p = 0.6114, predicted anticipatory
+four <- subset(viewing, imagetype==0)
+t.test(four$meanPUPIL[four$accuracy==1],four$meanPUPIL[four$accuracy==0],var.equal = FALSE)
+#p = 0.2523, unpair viewing
+five <- subset(viewing, imagetype==1)
+t.test(five$meanPUPIL[five$accuracy==1],five$meanPUPIL[five$accuracy==0],var.equal = FALSE)
+#p = 0.03655, predicting viewing ***
+six <- subset(viewing, imagetype==2)
+t.test(six$meanPUPIL[six$accuracy==1],six$meanPUPIL[six$accuracy==0],var.equal = FALSE)
+#p = 0.0186, predicted viewing ***
+
+```
+
+Modelling: pupil size based on image position, random effect for subjects
+can also add in: trial number, triplet times seen, 
+```{r}
+#500ms
+ant.phase <- subset(poo, TIMECODE < 502)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model500 <- ddply(ant.phase,.(subID,timesseen,whichimage,imagetype,accuracy),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit1 <- lmer(meanpupil ~ imagetype + (1|subID), data = model500)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit2 <- lmer(meanpupil ~ imagetype + accuracy + (1|subID), data = model500) 
+
+fit3 <- lmer(meanpupil ~ imagetype + accuracy + timesseen + (1|subID), data = model500) #(1|sub = intercept)
+
+
+anova(fit1,fit2,fit3)
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 0.026
+
+summary(fit3) #image + accuracy + timesseen + (1 | sub)
+#no diff in anything for anticipatory period
+
+#add interaction
+fit4 <- lmer(meanpupil ~ imagetype * accuracy * timesseen + (1|subID), data = model500) #(1|sub = intercept)
+summary(fit4)
+#nothing
+
+#750ms
+viewing.phase <- subset(poo, TIMECODE > 499 & TIMECODE < 1251)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model750 <- ddply(viewing.phase,.(subID,timesseen,whichimage,imagetype,accuracy),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit11 <- lmer(meanpupil ~ imagetype + (1|subID), data = model750)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit21 <- lmer(meanpupil ~ imagetype + accuracy + (1|subID), data = model750) 
+
+fit31 <- lmer(meanpupil ~ imagetype + accuracy + timesseen + (1|subID), data = model750) #(1|sub = intercept)
+
+anova(fit11,fit21,fit31)
+#comparing it to fit1
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 0.08484
+
+summary(fit31) #imagetype + accuracy + timesseen + (1 | sub)
+#throughout the experiment, size decreases with timesseen p = 0.0849
+#accuracy increases p = 0.0601
+#pupil size doesn't change depending on which image type it is 
+
+#add interaction
+fit41 <- lmer(meanpupil ~ imagetype * accuracy * timesseen + (1|subID), data = model750) #(1|sub = intercept)
+summary(fit41)
+#nothing
+
+```
+
